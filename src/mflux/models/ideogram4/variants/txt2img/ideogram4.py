@@ -4,6 +4,7 @@ import mlx.core as mx
 from mlx import nn
 
 from mflux.models.common.config import Config, ModelConfig
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
 from mflux.models.ideogram4.ideogram4_initializer import Ideogram4Initializer
@@ -56,6 +57,7 @@ class Ideogram4(nn.Module):
         strict_caption_validation: bool = False,
         warn_on_caption_issues: bool = True,
         cfg_end: float | None = None,
+        pid_decode: bool = False,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
             prompt,
@@ -155,7 +157,7 @@ class Ideogram4(nn.Module):
         predict_unconditional = None
         ctx.after_loop(z)
 
-        decoded = self._decode_latents(z=z, config=config)
+        decoded = self._decode_latents(z=z, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -165,6 +167,7 @@ class Ideogram4(nn.Module):
             lora_paths=self.lora_paths,
             lora_scales=self.lora_scales,
             generation_time=time_steps.format_dict["elapsed"],
+                    pid_decode=pid_decode,
         )
 
     def save_model(self, base_path: str) -> None:
@@ -175,8 +178,13 @@ class Ideogram4(nn.Module):
             weight_definition=Ideogram4WeightDefinition,
         )
 
-    def _decode_latents(self, *, z: mx.array, config: Config) -> mx.array:
-        return self.vae.decode(Ideogram4LatentCreator.unpack_latents(z, config.height, config.width))
+    def _decode_latents(
+        self, *, z: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False
+    ) -> mx.array:
+        latents = Ideogram4LatentCreator.unpack_latents(z, config.height, config.width)
+        if pid_decode:
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed)
+        return self.vae.decode(latents)
 
     @staticmethod
     def _predict_conditional(transformer: Ideogram4Transformer):

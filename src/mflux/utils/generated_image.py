@@ -41,6 +41,7 @@ class GeneratedImage:
         concept_heatmap: ConceptHeatmap | None = None,
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
+        pid_decode: bool = False,
     ):
         self.image = image
         self.model_config = model_config
@@ -67,6 +68,7 @@ class GeneratedImage:
         self.concept_heatmap = concept_heatmap
         self.negative_prompt = negative_prompt
         self.init_metadata = init_metadata
+        self.pid_decode = pid_decode
 
     def get_right_half(self) -> "GeneratedImage":
         # Calculate the coordinates for the right half
@@ -96,6 +98,7 @@ class GeneratedImage:
             depth_image_path=self.depth_image_path,
             concept_heatmap=self.concept_heatmap,
             init_metadata=self.init_metadata,
+            pid_decode=self.pid_decode,
         )
 
     def save(
@@ -217,6 +220,10 @@ class GeneratedImage:
             "guidance": self.guidance if self.model_config.supports_guidance else None,
             "height": self.height,
             "width": self.width,
+            # Generation dimensions, which is what reproduces the run. With --pid-decode the
+            # file on disk is 4x these, so record the flag or a re-run from this metadata would
+            # silently produce a quarter-size VAE-decoded image instead.
+            "pid_decode": True if self.pid_decode else None,
             "precision": str(self.precision),
             "quantize": self.quantization,
             "generation_time_seconds": round(self.generation_time, 2),
