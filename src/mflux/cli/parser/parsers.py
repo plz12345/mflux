@@ -187,6 +187,7 @@ class CommandLineParser(argparse.ArgumentParser):
 
     def add_pid_decode_arguments(self) -> None:
         self.add_argument("--pid-decode", action="store_true", help="Decode with NVIDIA PiD's pixel-diffusion super-resolving decoder instead of the standard VAE. First run downloads two separate Hugging Face checkpoints (~8GB total); google/gemma-2-2b-it is gated and requires accepting its license + `hf auth login`.")
+        self.add_argument("--pid-degrade-sigma", type=float, default=0.0, help="With --pid-decode, noise the latent to this sigma before conditioning on it, matching the sigma~U[0,0.8] degradation PiD's LQ gate was trained against. 0.0 (default) passes the clean latent. Raising it makes PiD lean less on the latent's high-frequency content and more on its own prior — try ~0.2 when PiD over-textures skin. Must be 0.0-0.8. Ignored without --pid-decode.")
 
     def add_output_arguments(self) -> None:
         self.add_argument("--metadata", action="store_true", help="Export image metadata as a JSON file.")
@@ -391,6 +392,8 @@ class CommandLineParser(argparse.ArgumentParser):
             # quarter of the original output size.
             if hasattr(namespace, "pid_decode") and not namespace.pid_decode:
                 namespace.pid_decode = bool(prior_gen_metadata.get("pid_decode", False))
+            if hasattr(namespace, "pid_degrade_sigma") and namespace.pid_degrade_sigma == 0.0:
+                namespace.pid_degrade_sigma = float(prior_gen_metadata.get("pid_degrade_sigma") or 0.0)
 
         # Only require model if we're not in training mode and require_model_arg is True
         if hasattr(namespace, "model") and namespace.model is None and not has_training_args and self.require_model_arg:

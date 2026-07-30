@@ -8,6 +8,7 @@ from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNot
 from mlx import nn
 from mlx.utils import tree_flatten, tree_unflatten
 
+from mflux.models.common.latent_creator.latent_creator import LatentCreator
 from mflux.models.common.pid_decoder.caption_encoder import PidCaptionEncoder
 from mflux.models.common.pid_decoder.gemma2.gemma2_config import Gemma2Config
 from mflux.models.common.pid_decoder.gemma2.gemma2_model import Gemma2Model
@@ -21,6 +22,16 @@ from mflux.models.common.weights.loading.weight_loader import WeightLoader
 
 PID_REPO_DEFAULT = "nvidia/PiD"
 GEMMA2_REPO = "google/gemma-2-2b-it"
+
+# PiD's LQ conditioning was trained on latents noised at sigma ~ U[0.0, 0.8]
+# (add_sigma_max in nvidia/PiD's v1pt5 teacher configs). Past that the decoder has
+# never seen the input distribution.
+PID_MAX_DEGRADE_SIGMA = 0.8
+
+# Independent RNG stream for the degradation noise, so raising --pid-degrade-sigma
+# does not also change the sampler's pixel noise and reshuffle the whole image.
+# Mirrors Krea2Sampler's `mx.random.key(seed ^ 0x5DE)`.
+_DEGRADE_KEY_SALT = 0x91D
 
 # Per-latent-space checkpoint variants: (checkpoint path in nvidia/PiD, lq_latent_channels).
 # PiD's LQ conditioning is the base model's VAE latent, so a checkpoint is selected by the
@@ -49,10 +60,17 @@ def _load_decoder(variant: str) -> "PidDecoder":
     return PidDecoder.from_pretrained(variant=variant)
 
 
-def pid_decode_latents(*, vae: nn.Module, latent: mx.array, caption: str, seed: int, sigma: float = 0.0) -> mx.array:
+def pid_decode_latents(
+    *, vae: nn.Module, latent: mx.array, caption: str, seed: int, degrade_sigma: float = 0.0
+) -> mx.array:
     """Decode `latent` with PiD instead of `vae`, picking the checkpoint from the VAE's own
     `pid_variant`. `latent` must be the unpacked VAE latent -- [B, C, H/8, W/8], the exact
     tensor `vae.decode` would receive.
+
+    `degrade_sigma` noises the LQ latent before conditioning on it, matching the
+    sigma~U[0, 0.8] degradation PiD's LQ gate was distilled against. 0.0 (the default) hands
+    PiD the clean latent. Raising it makes PiD lean less on the latent's own high-frequency
+    content and more on its prior -- the knob to reach for when PiD over-textures.
 
     Cached across calls (and across model instances) because loading costs ~8GB of downloads;
     the base pipeline's MLX buffers are released first, since PidNet's working set is much
@@ -63,13 +81,37 @@ def pid_decode_latents(*, vae: nn.Module, latent: mx.array, caption: str, seed: 
             f"--pid-decode: no PiD checkpoint covers {type(vae).__name__}'s latent space. "
             f"Supported: {sorted(PID_CHECKPOINT_VARIANTS)}."
         )
+    latent = _degrade_latent(latent=latent, degrade_sigma=degrade_sigma, seed=seed)
     # Release the diffusion loop's buffers BEFORE loading PidNet, not after: on the first call
     # that load materializes ~8GB, and PidNet's working set at 2-4k dwarfs the loop's. Doing it
     # the other way round means both peaks coexist for the duration of the load.
     gc.collect()
     mx.clear_cache()
     decoder = _load_decoder(variant)
-    return decoder.decode(latent=latent, caption=caption, seed=seed, sigma=sigma)
+    return decoder.decode(latent=latent, caption=caption, seed=seed, sigma=degrade_sigma)
+
+
+def _degrade_latent(*, latent: mx.array, degrade_sigma: float, seed: int) -> mx.array:
+    """Noise the LQ latent to `degrade_sigma` on PiD's own flow-matching frame.
+
+    Both halves of the degradation have to move together: the gates are told sigma
+    (`PidDecoder.decode` passes it through), and the latent they gate on has to actually
+    carry that much noise, which is how training paired them. Telling the gates 0.2 while
+    handing them a pristine latent is a distribution mismatch, not a weaker version of the
+    same thing.
+
+    PiD's backbone is x_t = (1-s)*x_0 + s*eps, identical to
+    `LatentCreator.add_noise_by_interpolation`, so no frame conversion is needed.
+    """
+    if degrade_sigma < 0 or degrade_sigma > PID_MAX_DEGRADE_SIGMA:
+        raise ValueError(
+            f"pid_degrade_sigma must be between 0.0 and {PID_MAX_DEGRADE_SIGMA}, got {degrade_sigma}. "
+            "Beyond that PiD's LQ gate has never seen the input distribution."
+        )
+    if degrade_sigma == 0.0:
+        return latent
+    noise = mx.random.normal(latent.shape, key=mx.random.key(seed ^ _DEGRADE_KEY_SALT)).astype(latent.dtype)
+    return LatentCreator.add_noise_by_interpolation(clean=latent, noise=noise, sigma=degrade_sigma)
 
 
 def _assert_full_weight_coverage(module: nn.Module, supplied: dict, label: str) -> None:

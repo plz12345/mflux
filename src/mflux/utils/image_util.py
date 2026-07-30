@@ -56,6 +56,7 @@ class ImageUtil:
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         normalized = ImageUtil._denormalize(decoded_latents)
         normalized_numpy = ImageUtil._to_numpy(normalized)
@@ -87,6 +88,7 @@ class ImageUtil:
             negative_prompt=negative_prompt,
             init_metadata=init_metadata,
             pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     @staticmethod

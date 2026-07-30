@@ -60,6 +60,7 @@ class Krea2(nn.Module):
         image_strength: float | None = None,
         scheduler: str | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         resolved_scheduler = Krea2._resolve_scheduler(scheduler)
 
@@ -110,7 +111,10 @@ class Krea2(nn.Module):
         predict = None
         ctx.after_loop(latents)
 
-        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode)
+        decoded = self._decode_latents(
+            latents=latents, prompt=prompt, seed=seed,
+            pid_decode=pid_decode, pid_degrade_sigma=pid_degrade_sigma,
+        )
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -124,6 +128,7 @@ class Krea2(nn.Module):
             image_path=config.image_path,
             image_strength=config.image_strength,
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def save_model(self, base_path: str) -> None:
@@ -167,10 +172,10 @@ class Krea2(nn.Module):
         return LatentCreator.add_noise_by_interpolation(clean=clean_latents, noise=pure_noise, sigma=sigma)
 
     def _decode_latents(
-        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0
+        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, pid_degrade_sigma: float = 0.0
     ) -> mx.array:
         if pid_decode:
-            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=sigma)
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         return self.vae.decode(latents)
 
     @staticmethod

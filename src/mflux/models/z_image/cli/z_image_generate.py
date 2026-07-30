@@ -65,6 +65,7 @@ def main():
                 scheduler=args.scheduler,
                 negative_prompt=args.negative_prompt,
                 pid_decode=args.pid_decode,
+                pid_degrade_sigma=args.pid_degrade_sigma,
             )
             # 4. Save the image
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)

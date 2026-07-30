@@ -61,6 +61,7 @@ class Flux1(nn.Module):
         scheduler: str = "linear",
         negative_prompt: str | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -137,7 +138,7 @@ class Flux1(nn.Module):
         # 8. Decode the latent array and return the image
         latents = FluxLatentCreator.unpack_latents(latents=latents, height=config.height, width=config.width)
         if pid_decode:
-            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed)
+            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         else:
             decoded = VAEUtil.decode(vae=self.vae, latent=latents, tiling_config=self.tiling_config)
         return ImageUtil.to_image(
@@ -152,6 +153,7 @@ class Flux1(nn.Module):
             image_strength=config.image_strength,
             generation_time=config.time_steps.format_dict["elapsed"],
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     @staticmethod

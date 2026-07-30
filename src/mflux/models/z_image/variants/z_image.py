@@ -60,6 +60,7 @@ class ZImage(nn.Module):
         scheduler: str | None = None,
         negative_prompt: str | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> Image.Image:
         supports_guidance = bool(self.model_config.supports_guidance)
         if not supports_guidance:
@@ -142,7 +143,7 @@ class ZImage(nn.Module):
         ctx.after_loop(latents)
 
         # 8. Decode the latents and return the image
-        decoded = self._decode_latents(latents=latents, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode)
+        decoded = self._decode_latents(latents=latents, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode, pid_degrade_sigma=pid_degrade_sigma)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -156,6 +157,7 @@ class ZImage(nn.Module):
             generation_time=config.time_steps.format_dict["elapsed"],
             negative_prompt=negative_prompt,
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def _encode_prompts(
@@ -181,11 +183,11 @@ class ZImage(nn.Module):
         return text_encodings, negative_encodings
 
     def _decode_latents(
-        self, *, latents: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False
+        self, *, latents: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False, pid_degrade_sigma: float = 0.0
     ) -> mx.array:
         unpacked = ZImageLatentCreator.unpack_latents(latents, config.height, config.width)
         if pid_decode:
-            return pid_decode_latents(vae=self.vae, latent=unpacked, caption=prompt, seed=seed)
+            return pid_decode_latents(vae=self.vae, latent=unpacked, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         return VAEUtil.decode(vae=self.vae, latent=unpacked, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

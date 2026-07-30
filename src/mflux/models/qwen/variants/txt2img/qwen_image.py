@@ -59,6 +59,7 @@ class QwenImage(nn.Module):
         scheduler: str = "linear",
         negative_prompt: str | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -143,7 +144,7 @@ class QwenImage(nn.Module):
         # 8. Decode the latent array and return the image
         latents = QwenLatentCreator.unpack_latents(latents=latents, height=config.height, width=config.width)
         if pid_decode:
-            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed)
+            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         else:
             decoded = VAEUtil.decode(vae=self.vae, latent=latents, tiling_config=self.tiling_config)
         return ImageUtil.to_image(
@@ -159,6 +160,7 @@ class QwenImage(nn.Module):
             generation_time=config.time_steps.format_dict["elapsed"],
             negative_prompt=negative_prompt,
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def save_model(self, base_path: str) -> None:

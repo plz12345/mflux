@@ -59,6 +59,7 @@ class Flux2Klein(nn.Module):
         image_strength: float | None = None,
         scheduler: str = "flow_match_euler_discrete",
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -126,7 +127,7 @@ class Flux2Klein(nn.Module):
         packed_latents = latents.reshape(latents.shape[0], latent_height, latent_width, latents.shape[-1]).transpose(0, 3, 1, 2)  # fmt: off
         if pid_decode:
             lq_latent = self.vae.unpack_packed_latents(packed_latents)
-            decoded = pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed)
+            decoded = pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         else:
             decoded = self.vae.decode_packed_latents(packed_latents)
         return ImageUtil.to_image(
@@ -142,6 +143,7 @@ class Flux2Klein(nn.Module):
             image_strength=config.image_strength,
             generation_time=config.time_steps.format_dict["elapsed"],
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def _encode_prompt_pair(

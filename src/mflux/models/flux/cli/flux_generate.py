@@ -65,6 +65,7 @@ def main():
                 image_strength=args.image_strength,
                 negative_prompt=PromptUtil.read_negative_prompt(args),
                 pid_decode=args.pid_decode,
+                pid_degrade_sigma=args.pid_degrade_sigma,
             )
             # 4. Save the image
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)

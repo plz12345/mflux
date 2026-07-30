@@ -58,6 +58,7 @@ class Ideogram4(nn.Module):
         warn_on_caption_issues: bool = True,
         cfg_end: float | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
             prompt,
@@ -157,7 +158,7 @@ class Ideogram4(nn.Module):
         predict_unconditional = None
         ctx.after_loop(z)
 
-        decoded = self._decode_latents(z=z, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode)
+        decoded = self._decode_latents(z=z, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode, pid_degrade_sigma=pid_degrade_sigma)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -168,6 +169,7 @@ class Ideogram4(nn.Module):
             lora_scales=self.lora_scales,
             generation_time=time_steps.format_dict["elapsed"],
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def save_model(self, base_path: str) -> None:
@@ -179,11 +181,11 @@ class Ideogram4(nn.Module):
         )
 
     def _decode_latents(
-        self, *, z: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False
+        self, *, z: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False, pid_degrade_sigma: float = 0.0
     ) -> mx.array:
         latents = Ideogram4LatentCreator.unpack_latents(z, config.height, config.width)
         if pid_decode:
-            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed)
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         return self.vae.decode(latents)
 
     @staticmethod

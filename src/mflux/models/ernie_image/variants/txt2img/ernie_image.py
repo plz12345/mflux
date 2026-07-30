@@ -59,6 +59,7 @@ class ErnieImage(nn.Module):
         scheduler: str | None = None,
         negative_prompt: str | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ) -> Image.Image:
         if scheduler is None:
             scheduler = "linear"
@@ -113,7 +114,10 @@ class ErnieImage(nn.Module):
         predict = None
         ctx.after_loop(latents)
 
-        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode)
+        decoded = self._decode_latents(
+            latents=latents, prompt=prompt, seed=seed,
+            pid_decode=pid_decode, pid_degrade_sigma=pid_degrade_sigma,
+        )
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -127,6 +131,7 @@ class ErnieImage(nn.Module):
             generation_time=config.time_steps.format_dict["elapsed"],
             negative_prompt=negative_prompt,
                     pid_decode=pid_decode,
+            pid_degrade_sigma=pid_degrade_sigma,
         )
 
     def _prepare_latents(self, *, seed: int, config: Config) -> mx.array:
@@ -174,11 +179,11 @@ class ErnieImage(nn.Module):
         return text_bth, text_lens
 
     def _decode_latents(
-        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0
+        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, pid_degrade_sigma: float = 0.0
     ) -> mx.array:
         if pid_decode:
             lq_latent = self.vae.unpack_packed_latents(latents)
-            return pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=sigma)
+            return pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, degrade_sigma=pid_degrade_sigma)
         return self.vae.decode_packed_latents(latents, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

@@ -42,6 +42,7 @@ class GeneratedImage:
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
         pid_decode: bool = False,
+        pid_degrade_sigma: float = 0.0,
     ):
         self.image = image
         self.model_config = model_config
@@ -69,6 +70,7 @@ class GeneratedImage:
         self.negative_prompt = negative_prompt
         self.init_metadata = init_metadata
         self.pid_decode = pid_decode
+        self.pid_degrade_sigma = pid_degrade_sigma
 
     def get_right_half(self) -> "GeneratedImage":
         # Calculate the coordinates for the right half
@@ -99,6 +101,7 @@ class GeneratedImage:
             concept_heatmap=self.concept_heatmap,
             init_metadata=self.init_metadata,
             pid_decode=self.pid_decode,
+            pid_degrade_sigma=self.pid_degrade_sigma,
         )
 
     def save(
@@ -224,6 +227,7 @@ class GeneratedImage:
             # file on disk is 4x these, so record the flag or a re-run from this metadata would
             # silently produce a quarter-size VAE-decoded image instead.
             "pid_decode": True if self.pid_decode else None,
+            "pid_degrade_sigma": self.pid_degrade_sigma if self.pid_decode and self.pid_degrade_sigma else None,
             "precision": str(self.precision),
             "quantize": self.quantization,
             "generation_time_seconds": round(self.generation_time, 2),

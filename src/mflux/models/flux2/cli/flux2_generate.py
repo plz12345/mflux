@@ -64,6 +64,7 @@ def main():
                 image_strength=args.image_strength,
                 scheduler="flow_match_euler_discrete",
                 pid_decode=args.pid_decode,
+                pid_degrade_sigma=args.pid_degrade_sigma,
             )
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)
     except (StopImageGenerationException, PromptFileReadError) as exc:
