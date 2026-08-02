@@ -1,4 +1,7 @@
-from mflux.models.common.lora.mapping.lora_mapping import LoRAMapping, LoRATarget
+from mflux.models.common.lora.mapping.lora_mapping import DiffTarget, LoRAMapping, LoRATarget
+
+# Prefixes seen across exporters for the same underlying module path.
+_PREFIXES = ("", "transformer.", "diffusion_model.", "base_model.model.")
 
 
 class Krea2LoRAMapping(LoRAMapping):
@@ -10,6 +13,42 @@ class Krea2LoRAMapping(LoRAMapping):
         targets.extend(Krea2LoRAMapping._get_text_fusion_targets("refiner_blocks"))
         targets.extend(Krea2LoRAMapping._get_transformer_block_targets())
         return targets
+
+    @staticmethod
+    def get_diff_mapping() -> list[DiffTarget]:
+        # ComfyUI-format Krea 2 adapters ship the fully fine-tuned RMSNorm scales and
+        # modulation vectors as `.diff` deltas, since those have no low-rank form.
+        targets: list[DiffTarget] = [
+            Krea2LoRAMapping._diff("txtmlp.norm.scale", aliases=["txtmlp.0.scale", "txt_in.norm.scale"]),
+            Krea2LoRAMapping._diff("last.norm.scale", aliases=["final_layer.norm.scale"]),
+            Krea2LoRAMapping._diff("last.modulation.lin", aliases=["final_layer.modulation.lin"]),
+        ]
+
+        mlx = "blocks.{block}"
+        diffusers = "transformer_blocks.{block}"
+        targets.append(Krea2LoRAMapping._diff(f"{mlx}.mod.lin", aliases=[f"{diffusers}.mod.lin"]))
+        targets.extend(Krea2LoRAMapping._norm_diffs(mlx, diffusers))
+
+        for group in ("layerwise_blocks", "refiner_blocks"):
+            targets.extend(
+                Krea2LoRAMapping._norm_diffs(f"txtfusion.{group}.{{block}}", f"text_fusion.{group}.{{block}}")
+            )
+
+        return targets
+
+    @staticmethod
+    def _norm_diffs(mlx: str, diffusers: str) -> list[DiffTarget]:
+        suffixes = ("prenorm.scale", "postnorm.scale", "attn.qknorm.qnorm.scale", "attn.qknorm.knorm.scale")
+        return [Krea2LoRAMapping._diff(f"{mlx}.{s}", aliases=[f"{diffusers}.{s}"]) for s in suffixes]
+
+    @staticmethod
+    def _diff(param_path: str, aliases: list[str] | None = None) -> DiffTarget:
+        return DiffTarget(
+            param_path=param_path,
+            possible_patterns=[
+                f"{prefix}{path}.diff" for path in (param_path, *(aliases or [])) for prefix in _PREFIXES
+            ],
+        )
 
     @staticmethod
     def _get_global_targets() -> list[LoRATarget]:
@@ -80,8 +119,11 @@ class Krea2LoRAMapping(LoRAMapping):
             suffixes = [
                 "lora_B.weight",
                 "lora_B.default.weight",
+                # ComfyUI-format exports store the matrix at the bare key, without `.weight`
+                "lora_B",
                 "lora_up.weight",
                 "lora_up.default.weight",
+                "lora_up",
                 "lora.up.weight",
                 "lora.up.default.weight",
             ]
@@ -89,15 +131,17 @@ class Krea2LoRAMapping(LoRAMapping):
             suffixes = [
                 "lora_A.weight",
                 "lora_A.default.weight",
+                "lora_A",
                 "lora_down.weight",
                 "lora_down.default.weight",
+                "lora_down",
                 "lora.down.weight",
                 "lora.down.default.weight",
             ]
 
         patterns = []
         for path in module_paths:
-            for prefix in ("", "transformer.", "diffusion_model.", "base_model.model."):
+            for prefix in _PREFIXES:
                 patterns.extend(f"{prefix}{path}.{suffix}" for suffix in suffixes)
 
         flat_suffix = "lora_up" if direction == "up" else "lora_down"
@@ -118,18 +162,14 @@ class Krea2LoRAMapping(LoRAMapping):
         # the decomposed `_a`/`_b`/`lokr_t2` variants from these base patterns.
         patterns = []
         for path in module_paths:
-            patterns.extend(
-                f"{prefix}{path}.{factor}" for prefix in ("", "transformer.", "diffusion_model.", "base_model.model.")
-            )
+            patterns.extend(f"{prefix}{path}.{factor}" for prefix in _PREFIXES)
         return patterns
 
     @staticmethod
     def _alpha_patterns(module_paths: list[str], flat_paths: list[str]) -> list[str]:
         patterns = []
         for path in module_paths:
-            patterns.extend(
-                f"{prefix}{path}.alpha" for prefix in ("", "transformer.", "diffusion_model.", "base_model.model.")
-            )
+            patterns.extend(f"{prefix}{path}.alpha" for prefix in _PREFIXES)
         patterns.extend(f"lora_unet_{path}.alpha" for path in flat_paths)
         return patterns
 

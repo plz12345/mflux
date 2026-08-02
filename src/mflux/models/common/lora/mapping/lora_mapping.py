@@ -20,7 +20,25 @@ class LoRATarget:
     lokr_w2_transform: Callable[[mx.array], mx.array] | None = None
 
 
+@dataclass
+class DiffTarget:
+    """A full-weight delta applied directly to a model parameter.
+
+    ComfyUI's `LoraLoader` supports adapters that ship fully fine-tuned tensors as
+    `<path>.diff` deltas against the base weights, alongside the usual low-rank pairs.
+    These target parameters that have no low-rank decomposition (RMSNorm scales,
+    modulation vectors), so they are added in place rather than wrapped in a layer.
+    """
+
+    param_path: str
+    possible_patterns: List[str]
+
+
 class LoRAMapping(Protocol):
     @staticmethod
     def get_mapping() -> List[LoRATarget]:
         return
+
+    @staticmethod
+    def get_diff_mapping() -> List[DiffTarget]:
+        return []

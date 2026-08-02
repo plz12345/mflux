@@ -10,7 +10,7 @@ from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALine
 from mflux.models.common.lora.layer.linear_lokr_layer import LoKrLinear
 from mflux.models.common.lora.layer.linear_lora_layer import LoRALinear
 from mflux.models.common.lora.mapping.lokr_factors import is_lokr_adapter, rebuild_lokr_factors
-from mflux.models.common.lora.mapping.lora_mapping import LoRATarget
+from mflux.models.common.lora.mapping.lora_mapping import DiffTarget, LoRATarget
 from mflux.models.common.lora.mapping.lora_saver import LoRASaver
 from mflux.models.common.resolution.lora_resolution import LoraResolution
 
@@ -33,6 +33,7 @@ class LoRALoader:
         lora_scales: list[float] | None = None,
         role: str | None = None,
         bake_lora: bool = True,
+        diff_mapping: list[DiffTarget] | None = None,
     ) -> tuple[list[str], list[float]]:
         resolved_paths = LoraResolution.resolve_paths(lora_paths)
         if not resolved_paths:
@@ -47,7 +48,9 @@ class LoRALoader:
         print(f"📦 Loading {len(resolved_paths)} LoRA file(s)...")
 
         for lora_file, scale in zip(resolved_paths, resolved_scales):
-            LoRALoader._apply_single_lora(transformer, lora_file, scale, lora_mapping, role=role)
+            LoRALoader._apply_single_lora(
+                transformer, lora_file, scale, lora_mapping, role=role, diff_mapping=diff_mapping
+            )
 
         print("✅ All LoRA weights applied successfully")
 
@@ -67,6 +70,7 @@ class LoRALoader:
         lora_mapping: list[LoRATarget],
         *,
         role: str | None,
+        diff_mapping: list[DiffTarget] | None = None,
     ) -> None:
         # Load the LoRA weights
         if not Path(lora_file).exists():
@@ -89,11 +93,17 @@ class LoRALoader:
             transformer, weights, scale, pattern_mappings, role=role
         )
 
+        # Apply any full-weight `.diff` deltas that ship alongside the low-rank pairs
+        diff_count, diff_matched_keys = LoRALoader._apply_weight_diffs(transformer, weights, scale, diff_mapping)
+        matched_keys |= diff_matched_keys
+
         # Report results
         total_keys = len(weights)
         unmatched_keys = set(weights.keys()) - matched_keys
 
         print(f"   ✅ Applied to {applied_count} layers ({len(matched_keys)}/{total_keys} keys matched)")
+        if diff_count:
+            print(f"   ✅ Applied {diff_count} full-weight deltas")
 
         if unmatched_keys:
             print(f"   ⚠️  {len(unmatched_keys)} unmatched keys in LoRA file:")
@@ -102,7 +112,7 @@ class LoRALoader:
             if len(unmatched_keys) > 5:
                 print(f"      ... and {len(unmatched_keys) - 5} more")
 
-        if applied_count == 0:
+        if applied_count == 0 and diff_count == 0:
             raise ValueError(f"No LoRA layers were applied from {Path(lora_file).name}")
 
     @staticmethod
@@ -282,6 +292,66 @@ class LoRALoader:
                 applied_count += 1
 
         return applied_count, matched_keys
+
+    @staticmethod
+    def _apply_weight_diffs(
+        transformer: nn.Module,
+        weights: dict,
+        scale: float,
+        diff_mapping: list[DiffTarget] | None,
+    ) -> tuple[int, set]:
+        applied_count = 0
+        matched_keys: set[str] = set()
+
+        if not diff_mapping:
+            return applied_count, matched_keys
+
+        pattern_pairs = [
+            (pattern, target.param_path) for target in diff_mapping for pattern in target.possible_patterns
+        ]
+
+        for weight_key, weight_value in weights.items():
+            for pattern, param_path in pattern_pairs:
+                block_idx = LoRALoader._match_pattern(weight_key, pattern)
+                if block_idx is None:
+                    continue
+
+                matched_keys.add(weight_key)
+                if "{block}" in param_path:
+                    param_path = param_path.format(block=block_idx)
+
+                if LoRALoader._apply_diff_to_param(transformer, param_path, weight_value, scale):
+                    applied_count += 1
+                break
+
+        return applied_count, matched_keys
+
+    @staticmethod
+    def _apply_diff_to_param(transformer: nn.Module, param_path: str, delta: mx.array, scale: float) -> bool:
+        parent_path, _, attribute = param_path.rpartition(".")
+
+        try:
+            parent = LoRALoader._get_target_module(transformer, parent_path) if parent_path else transformer
+            current = parent[attribute] if isinstance(parent, dict) else getattr(parent, attribute)
+        except (AttributeError, IndexError, KeyError):
+            print(f"❌ Could not find diff target: {param_path}")
+            return False
+
+        if not isinstance(current, mx.array):
+            print(f"❌ Diff target {param_path} is not a parameter")
+            return False
+
+        if current.shape != delta.shape:
+            print(f"❌ Shape mismatch for diff {param_path}: model {current.shape} vs LoRA {delta.shape}")
+            return False
+
+        updated = (current.astype(mx.float32) + scale * delta.astype(mx.float32)).astype(current.dtype)
+        if isinstance(parent, dict):
+            parent[attribute] = updated
+        else:
+            setattr(parent, attribute, updated)
+
+        return True
 
     @staticmethod
     def _apply_adapter_to_target(

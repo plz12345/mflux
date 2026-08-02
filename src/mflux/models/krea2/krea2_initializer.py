@@ -85,6 +85,7 @@ class Krea2Initializer:
     ) -> None:
         model.lora_paths, model.lora_scales = LoRALoader.load_and_apply_lora(
             lora_mapping=Krea2LoRAMapping.get_mapping(),
+            diff_mapping=Krea2LoRAMapping.get_diff_mapping(),
             transformer=model.transformer,
             lora_paths=lora_paths,
             lora_scales=lora_scales,

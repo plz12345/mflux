@@ -163,6 +163,110 @@ class TestKrea2LoRAMapping:
         assert isinstance(transformer.txtfusion.projector, LoRALinear)
         assert transformer.txtfusion.projector.scale == pytest.approx(0.5)
 
+    def test_matches_comfy_bare_matrix_keys(self):
+        # ComfyUI-format exports (e.g. lodestones/Kroma) drop the trailing `.weight`.
+        keys = [
+            "diffusion_model.blocks.0.attn.wq.lora_A",
+            "diffusion_model.blocks.0.attn.wq.lora_B",
+            "diffusion_model.blocks.0.mlp.down.lora_down",
+            "diffusion_model.blocks.0.mlp.down.lora_up",
+            "diffusion_model.txtfusion.projector.lora_A",
+            "diffusion_model.txtfusion.projector.lora_B",
+        ]
+        assert self._matched_keys(keys) == set(keys)
+
+    def test_applies_comfy_bare_matrix_lora_to_transformer(self, tmp_path):
+        transformer = _tiny_transformer()
+        lora_path = tmp_path / "krea2_comfy_lora.safetensors"
+        mx.save_safetensors(
+            str(lora_path),
+            {
+                "diffusion_model.blocks.0.attn.wq.lora_A": mx.ones((2, 32)),
+                "diffusion_model.blocks.0.attn.wq.lora_B": mx.ones((32, 2)),
+            },
+        )
+
+        LoRALoader.load_and_apply_lora(
+            lora_mapping=Krea2LoRAMapping.get_mapping(),
+            transformer=transformer,
+            lora_paths=[str(lora_path)],
+            lora_scales=[0.7],
+            bake_lora=False,
+        )
+
+        assert isinstance(transformer.blocks[0].attn.wq, LoRALinear)
+
+    def test_applies_weight_diffs_to_transformer(self, tmp_path):
+        transformer = _tiny_transformer()
+        prenorm_before = transformer.blocks[0].prenorm.scale
+        mod_before = transformer.blocks[0].mod.lin
+        txtmlp_before = transformer.txtmlp.norm.scale
+
+        prenorm_delta = mx.ones_like(prenorm_before)
+        mod_delta = mx.ones_like(mod_before)
+        txtmlp_delta = mx.ones_like(txtmlp_before)
+
+        lora_path = tmp_path / "krea2_diff_lora.safetensors"
+        mx.save_safetensors(
+            str(lora_path),
+            {
+                # A low-rank pair so the file is a valid adapter on its own.
+                "diffusion_model.blocks.0.attn.wq.lora_A": mx.ones((2, 32)),
+                "diffusion_model.blocks.0.attn.wq.lora_B": mx.ones((32, 2)),
+                "diffusion_model.blocks.0.prenorm.scale.diff": prenorm_delta,
+                "diffusion_model.blocks.0.mod.lin.diff": mod_delta,
+                "diffusion_model.txtmlp.0.scale.diff": txtmlp_delta,
+            },
+        )
+
+        LoRALoader.load_and_apply_lora(
+            lora_mapping=Krea2LoRAMapping.get_mapping(),
+            diff_mapping=Krea2LoRAMapping.get_diff_mapping(),
+            transformer=transformer,
+            lora_paths=[str(lora_path)],
+            lora_scales=[0.5],
+            bake_lora=False,
+        )
+
+        # `.diff` deltas are added in place, attenuated by the LoRA scale.
+        assert mx.allclose(transformer.blocks[0].prenorm.scale, prenorm_before + 0.5 * prenorm_delta)
+        assert mx.allclose(transformer.blocks[0].mod.lin, mod_before + 0.5 * mod_delta)
+        assert mx.allclose(transformer.txtmlp.norm.scale, txtmlp_before + 0.5 * txtmlp_delta)
+
+    def test_applies_diff_only_adapter(self, tmp_path):
+        transformer = _tiny_transformer()
+        before = transformer.last.norm.scale
+        delta = mx.ones_like(before)
+
+        lora_path = tmp_path / "krea2_diff_only.safetensors"
+        mx.save_safetensors(str(lora_path), {"diffusion_model.last.norm.scale.diff": delta})
+
+        # An adapter carrying only deltas must not trip the "nothing was applied" guard.
+        LoRALoader.load_and_apply_lora(
+            lora_mapping=Krea2LoRAMapping.get_mapping(),
+            diff_mapping=Krea2LoRAMapping.get_diff_mapping(),
+            transformer=transformer,
+            lora_paths=[str(lora_path)],
+            lora_scales=[1.0],
+            bake_lora=False,
+        )
+
+        assert mx.allclose(transformer.last.norm.scale, before + delta)
+
+    def test_diff_mapping_ignored_when_not_supplied(self, tmp_path):
+        transformer = _tiny_transformer()
+        lora_path = tmp_path / "krea2_diff_unsupported.safetensors"
+        mx.save_safetensors(str(lora_path), {"diffusion_model.last.norm.scale.diff": mx.ones((32,))})
+
+        with pytest.raises(ValueError, match="No LoRA layers were applied"):
+            LoRALoader.load_and_apply_lora(
+                lora_mapping=Krea2LoRAMapping.get_mapping(),
+                transformer=transformer,
+                lora_paths=[str(lora_path)],
+                lora_scales=[1.0],
+                bake_lora=False,
+            )
+
     def _matched_keys(self, keys: list[str]) -> set[str]:
         matched_keys: set[str] = set()
         for key in keys:
